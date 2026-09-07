@@ -190,7 +190,7 @@ and the queries; these tools call its read API (`rec.aynu.org/api`) over the
 | --- | --- |
 | `records_search(query?, source?, unit?, section?, certainty?, interpreted?, limit?, offset?)` | Search wordlist items — `query` matches the transcribed kana form, its alternatives, the modern reading (latin or kana), the Japanese gloss and the remark, ranked exact before prefix before substring; `unit` needs its `source`, since units of different works share slugs; `interpreted=false` finds items still without a modern reading |
 | `records_list_sources` | The records, their units (witness or volume), holding institutions, page/item counts, section headings and TEI downloads |
-| `records_get_page(source, unit, page, include_items?)` | One page: the diplomatic transcription line by line, the facsimile image, and the page's parsed items |
+| `records_get_page(source, unit, page, include_items?)` | One page: the diplomatic transcription line by line as text and as markup, the leaf's own description and the transcribers' notes, the facsimile image, and the page's parsed items |
 
 ### Script conversion
 

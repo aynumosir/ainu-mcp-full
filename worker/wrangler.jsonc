@@ -53,8 +53,8 @@
     // were extracted here; the corpus-source.ts dispatcher uses this binding when
     // USE_CORPUS_API === "true", else falls back to the direct env.DB path.
     { "binding": "CORPUS", "service": "ainu-corpora-api" },
-    // Early records of the Ainu language (rec.aynu.org): the site publishes its
-    // data as static JSON under /x/, which the records tools read.
+    // Early records of the Ainu language (rec.aynu.org): the records tools call
+    // that app's read API under /api/.
     { "binding": "RECORDS", "service": "ainu-records" }
   ],
 

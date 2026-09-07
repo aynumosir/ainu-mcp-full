@@ -17,6 +17,7 @@
  *   ／          separates alternative forms given for one gloss
  *   ［欠：…］    a gap: illegible, blank, or unidentified
  *   ［注 n］     a note reference; ［※ …］ a transcriber's comment
+ *   ［右線：s］   傍線 beside the text; ［圏点：s］ emphasis dots over it
  *   「…」       a quotation
  */
 import { z } from "zod";
@@ -29,12 +30,20 @@ const RECORDS = "https://rec.aynu.org";
 /** Envelope-unwrapping GET against the records API over the service binding. */
 async function get<T>(env: Env, path: string): Promise<T> {
   const res = await env.RECORDS.fetch(new Request(`${RECORDS}${path}`));
-  const body = (await res.json().catch(() => null)) as
-    | { data?: T; error?: { code: string; message: string } }
-    | null;
-  if (body?.error) throw new Error(`${body.error.code}: ${body.error.message}`);
-  if (!res.ok || !body) throw new Error(`records API ${path} → HTTP ${res.status}`);
-  return body.data as T;
+  const text = await res.text();
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error(`records API ${path} → HTTP ${res.status}, not JSON: ${text.slice(0, 200)}`);
+  }
+  const envelope = body as { data?: T; error?: { code: string; message: string } };
+  if (envelope?.error) throw new Error(`${envelope.error.code}: ${envelope.error.message}`);
+  if (!res.ok) throw new Error(`records API ${path} → HTTP ${res.status}: ${text.slice(0, 200)}`);
+  // An envelope without `data` would otherwise reach the model as an empty result.
+  if (body === null || typeof body !== "object" || envelope.data === undefined)
+    throw new Error(`records API ${path} → reply carries no data`);
+  return envelope.data;
 }
 
 function query(params: Record<string, string | number | boolean | undefined>): string {
@@ -75,19 +84,21 @@ interface Index {
   sources: Source[];
 }
 
+/** The transcription markup the records site parses; kept in step with its
+ *  own `scripts/lib/markup.ts`. */
 export type Node =
   | { t: "text"; s: string }
   | { t: "warigaki"; lines: Node[][] }
   | { t: "ruby"; rt: string; rb: string }
-  | { t: "hi"; s: string }
+  | { t: "hi"; rend: "right-line" | "kenten"; s: string; mark?: string }
   | { t: "subst"; del: string; add: string }
   | { t: "editorial"; s: string }
   | { t: "sic" }
-  | { t: "gap"; reason: string }
+  | { t: "gap"; reason: "illegible" | "blank" | "unidentified" }
   | { t: "alt" }
   | { t: "noteref"; n: string }
   | { t: "comment"; s: string }
-  | { t: "quote"; nodes: Node[] };
+  | { t: "quote"; nodes: Node[]; lang: "ain" | null };
 
 interface PageResult {
   source: string;
@@ -98,15 +109,23 @@ interface PageResult {
     updatedAt: string | null;
     platformUrl: string;
     image: string | null;
+    /** Descriptions of the leaf itself — a blank recto, a seal, a stamp. */
+    physical: string[];
+    notes: { type: string; content: string; by: string | null; at: string | null }[];
     halves: { side: string | null; lines: { n: number; nodes: Node[] }[] }[];
   };
   items: unknown[];
 }
 
-const GAP_REASON: Record<string, string> = {
+const GAP_REASON: Record<Extract<Node, { t: "gap" }>["reason"], string> = {
   illegible: "判読不能",
   blank: "空白",
   unidentified: "不明",
+};
+
+const REND: Record<Extract<Node, { t: "hi" }>["rend"], string> = {
+  "right-line": "右線",
+  kenten: "圏点",
 };
 
 /** Render one line's markup nodes as plain text (markers as documented above). */
@@ -121,7 +140,7 @@ export function renderNodes(nodes: Node[]): string {
         case "ruby":
           return `${n.rb}（${n.rt}）`;
         case "hi":
-          return n.s;
+          return `［${REND[n.rend]}${n.mark ? `：${n.mark}` : ""}：${n.s}］`;
         case "subst":
           return `⟦${n.del}→${n.add}⟧`;
         case "editorial":
@@ -129,7 +148,7 @@ export function renderNodes(nodes: Node[]): string {
         case "sic":
           return "〔ママ〕";
         case "gap":
-          return `［欠：${GAP_REASON[n.reason] ?? n.reason}］`;
+          return `［欠：${GAP_REASON[n.reason]}］`;
         case "alt":
           return "／";
         case "noteref":
@@ -138,8 +157,12 @@ export function renderNodes(nodes: Node[]): string {
           return `［※ ${n.s}］`;
         case "quote":
           return `「${renderNodes(n.nodes)}」`;
-        default:
-          return "";
+        default: {
+          // Markup the site adds later must break the build rather than vanish
+          // from a line a reader will take as a faithful transcription.
+          const unknown: never = n;
+          throw new Error(`unrecognised transcription markup: ${JSON.stringify(unknown)}`);
+        }
       }
     })
     .join("");
@@ -153,12 +176,12 @@ export function unitNeedsSource(opts: { source?: string; unit?: string }): boole
 export function registerRecordsTools(server: McpServer, env: Env): void {
   server.tool(
     "records_search",
-    "Search the wordlist items of the early Ainu-language records at rec.aynu.org (records written 17th–19th c., crowd-transcribed on みんなで翻刻). `query` matches the transcribed kana form, its alternatives, the modern Ainu reading (latin or kana), the Japanese gloss and the item's remark at once — substring, case-insensitive, katakana and hiragana equivalent, ranked exact before prefix before substring. Narrow by `source` slug (records_list_sources), `unit` slug (which needs its `source`, since units of different works share slugs), `section` (the wordlist's own subject heading, e.g. 天地), `certainty` of the modern reading ('high' | 'medium' | 'low' | 'guess'), or `interpreted` (false = items still without a modern reading). Each hit carries the original form, the gloss, the modern reading with its certainty and citation, and a URL onto the page beside the facsimile. `capped` in the reply means the count stopped at the search ceiling and more items match than it says.",
+    "Search the wordlist items of the early Ainu-language records at rec.aynu.org (records written 17th–19th c., crowd-transcribed on みんなで翻刻). `query` matches the transcribed kana form, its alternatives, the modern Ainu reading (latin or kana), the Japanese gloss and the item's remark at once — substring, case-insensitive, katakana and hiragana equivalent, ranked exact before prefix before substring. Narrow by `source` slug (records_list_sources), `unit` slug (which needs its `source`, since units of different works share slugs), `section` (the wordlist's own subject heading, e.g. 天地), `certainty` of the modern reading ('high' | 'medium' | 'low' | 'guess'), or `interpreted` (false = items still without a modern reading). Each hit carries the original form, the gloss, the modern reading with its certainty and citation, and a URL onto the page beside the facsimile. `capped` in the reply means the search stopped at its candidate ceiling: `total` is a lower bound, ranking held only among the candidates examined, and a narrower filter or query answers completely.",
     {
-      query: z.string().trim().optional(),
-      source: z.string().trim().optional(),
-      unit: z.string().trim().optional(),
-      section: z.string().trim().optional(),
+      query: z.string().trim().min(1).optional(),
+      source: z.string().trim().min(1).optional(),
+      unit: z.string().trim().min(1).optional(),
+      section: z.string().trim().min(1).optional(),
       certainty: z.enum(["high", "medium", "low", "guess"]).optional(),
       interpreted: z.boolean().optional(),
       limit: z.number().int().min(1).max(100).default(20),
@@ -245,9 +268,15 @@ export function registerRecordsTools(server: McpServer, env: Env): void {
           url: `${RECORDS}/sources/${source}/${unit}/${page}`,
           platform_url: p.platformUrl,
           image_url: p.image,
+          // The leaf's own description (a blank recto, a seal) and the
+          // transcribers' notes sit outside the lines and carry the same weight
+          // as them; the markup rides beside its rendering, so nothing a reader
+          // may need exists only as plain text.
+          physical: p.physical,
+          notes: p.notes,
           halves: p.halves.map((h) => ({
             side: h.side,
-            lines: h.lines.map((l) => ({ n: l.n, text: renderNodes(l.nodes) })),
+            lines: h.lines.map((l) => ({ n: l.n, text: renderNodes(l.nodes), nodes: l.nodes })),
           })),
           items: include_items ? result.items : [],
         });
