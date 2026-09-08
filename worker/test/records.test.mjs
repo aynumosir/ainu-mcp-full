@@ -93,7 +93,7 @@ test("a page renders each line and keeps what the leaf itself carries", async ()
   };
   const { env } = stub([{ body: JSON.stringify({ data: { source: "s", unit: "u", page, items: [{ id: "i" }] } }) }]);
   const data = JSON.parse((await collect(env).records_get_page.handler(
-    { source: "s", unit: "u", page: 2, include_items: true })).content[0].text);
+    { source: "s", unit: "u", page: 2, include_items: true, include_markup: true })).content[0].text);
   expect(data.physical).toEqual(["右丁 白紙"]);
   expect(data.notes[0].content).toBe("「𠧱」の古字");
   expect(data.halves[0].lines[0].text).toBe("天［圏点：地］");
@@ -106,9 +106,21 @@ test("include_items=false drops the items and keeps the transcription", async ()
     halves: [{ side: null, lines: [{ n: 1, nodes: [{ t: "text", s: "天" }] }] }] };
   const { env } = stub([{ body: JSON.stringify({ data: { source: "s", unit: "u", page, items: [{ id: "i" }] } }) }]);
   const data = JSON.parse((await collect(env).records_get_page.handler(
-    { source: "s", unit: "u", page: 1, include_items: false })).content[0].text);
+    { source: "s", unit: "u", page: 1, include_items: false, include_markup: false })).content[0].text);
   expect(data.items).toEqual([]);
   expect(data.halves[0].lines[0].text).toBe("天");
+});
+
+test("markup rides beside the text only when it is asked for", async () => {
+  const page = { n: 1, status: "completed", updatedAt: null, platformUrl: "p", image: null, physical: [], notes: [],
+    halves: [{ side: null, lines: [{ n: 1, nodes: [{ t: "text", s: "天" }] }] }] };
+  const reply = { body: JSON.stringify({ data: { source: "s", unit: "u", page, items: [] } }) };
+  const plain = JSON.parse((await collect(stub([reply]).env).records_get_page.handler(
+    { source: "s", unit: "u", page: 1, include_items: true, include_markup: false })).content[0].text);
+  expect(plain.halves[0].lines[0]).toEqual({ n: 1, text: "天" });
+  const marked = JSON.parse((await collect(stub([reply]).env).records_get_page.handler(
+    { source: "s", unit: "u", page: 1, include_items: true, include_markup: true })).content[0].text);
+  expect(marked.halves[0].lines[0].nodes).toEqual([{ t: "text", s: "天" }]);
 });
 
 test("an upstream error becomes a tool error carrying its code", async () => {
