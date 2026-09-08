@@ -176,7 +176,7 @@ export function unitNeedsSource(opts: { source?: string; unit?: string }): boole
 export function registerRecordsTools(server: McpServer, env: Env): void {
   server.tool(
     "records_search",
-    "Search the wordlist items of the early Ainu-language records at rec.aynu.org (records written 17th–19th c., crowd-transcribed on みんなで翻刻). `query` matches the transcribed kana form, its alternatives, the modern Ainu reading (latin or kana), the Japanese gloss and the item's remark at once — substring, case-insensitive, katakana and hiragana equivalent, ranked exact before prefix before substring. Narrow by `source` slug (records_list_sources), `unit` slug (which needs its `source`, since units of different works share slugs), `section` (the wordlist's own subject heading, e.g. 天地), `certainty` of the modern reading ('high' | 'medium' | 'low' | 'guess'), or `interpreted` (false = items still without a modern reading). Each hit carries the original form, the gloss, the modern reading with its certainty and citation, and a URL onto the page beside the facsimile. `capped` in the reply means the search stopped at its candidate ceiling: `total` is a lower bound, ranking held only among the candidates examined, and a narrower filter or query answers completely.",
+    "Search the wordlist items of the early Ainu-language records at rec.aynu.org (records written 17th–19th c., crowd-transcribed on みんなで翻刻). `query` matches the transcribed kana form, its alternatives, the modern Ainu reading (latin or kana), the Japanese gloss and the item's remark at once — substring, case-insensitive, katakana and hiragana equivalent, ranked exact before prefix before substring. Narrow by `source` slug (records_list_sources), `unit` slug (which needs its `source`, since units of different works share slugs), `section` (the wordlist's own subject heading, e.g. 天地), `certainty` of the modern reading ('high' | 'medium' | 'low' | 'guess'), or `interpreted` (false = items still without a modern reading). Each hit carries the transcribed `form` and its `alternatives`, the Japanese `gloss`, the modern reading (`modern`, `modernKana`) with its `certainty` and `citation`, and a URL onto the page beside the facsimile. `origin` says how the line was written: 'line' is an entry written on the line itself, 'warigaki' one written small in a split column, usually an alternative or a note on the entry above. `line` is the line of the page; `block` and `blockEnd` are the first and last line of the manuscript entry the item belongs to, which can span several lines; `side` names the half of an opening for a page copied on both; `head` and `sub` carry a heading and a sub-heading where the wordlist groups entries under one; `continued` marks an item whose entry carries on from the line before. `capped` in the reply means the search stopped at its candidate ceiling: `total` is a lower bound, ranking held only among the candidates examined, and a narrower filter or query answers completely.",
     {
       query: z.string().trim().min(1).optional(),
       source: z.string().trim().min(1).optional(),
@@ -245,14 +245,15 @@ export function registerRecordsTools(server: McpServer, env: Env): void {
 
   server.tool(
     "records_get_page",
-    "Read one page of an early Ainu-language record at rec.aynu.org: the diplomatic transcription as plain text, line by line (a page copied on both halves of an opening comes back as two halves), plus the facsimile image URL, the page's transcription status, and — for a wordlist page — the parsed items with their modern readings. Pass the `source` and `unit` slugs from records_list_sources and the page number as the site numbers it (the leaf of /sources/<source>/<unit>/<page>).",
+    "Read one page of an early Ainu-language record at rec.aynu.org: the diplomatic transcription as plain text, line by line (a page copied on both halves of an opening comes back as two halves), plus the facsimile image URL, the page's transcription status, and — for a wordlist page — the parsed items with their modern readings. Pass the `source` and `unit` slugs from records_list_sources and the page number as the site numbers it (the leaf of /sources/<source>/<unit>/<page>). Items come back in the order the lines are read. `include_markup` adds each line's parsed markup beside its text — the nodes behind the ⟨…｜…⟩, ／ and 〔…〕 markers, with the entity marks — which is worth asking for when the exact markup matters and costs several times the reply size when it does not.",
     {
       source: z.string().trim().min(1),
       unit: z.string().trim().min(1),
       page: z.number().int().min(1),
       include_items: z.boolean().default(true),
+      include_markup: z.boolean().default(false),
     },
-    async ({ source, unit, page, include_items }) => {
+    async ({ source, unit, page, include_items, include_markup }) => {
       try {
         const result = await get<PageResult>(
           env,
@@ -276,7 +277,9 @@ export function registerRecordsTools(server: McpServer, env: Env): void {
           notes: p.notes,
           halves: p.halves.map((h) => ({
             side: h.side,
-            lines: h.lines.map((l) => ({ n: l.n, text: renderNodes(l.nodes), nodes: l.nodes })),
+            lines: h.lines.map((l) => (include_markup
+              ? { n: l.n, text: renderNodes(l.nodes), nodes: l.nodes }
+              : { n: l.n, text: renderNodes(l.nodes) })),
           })),
           items: include_items ? result.items : [],
         });
